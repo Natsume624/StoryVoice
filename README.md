@@ -17,23 +17,20 @@
 - 连续播放：按需生成、磁盘缓存、语速和情感强度调节
 - 阅读器：正文、章节切换、播放进度和播放控制
 - 同步伴读：朗读句高亮、自动跟随滚动、字号调节、护眼与夜间阅读
+- 手机独立运行：在应用内配置阿里云百炼 API Key，直接通过 HTTPS 调用云端模型
+- 睡眠定时：支持 15、30、45、60 分钟后自动停止
+- 阅读进度：自动保存章节和滚动位置，再次打开时可选择继续或从头阅读
+- 最近阅读：书架展示最近打开的书籍
+- 自定义合集：创建多个合集，并自由添加或移除书籍
 
 ## 运行
 
-1. 在阿里云百炼创建 API Key，并安装 Node.js 20 或更高版本。
-2. 配置环境变量。PowerShell 示例：
+1. 在阿里云百炼创建 API Key。
+2. 安装 APK，导入一本书并进入阅读器。
+3. 点击右上角设置，填写 API Key。北京默认空间可保持 `https://dashscope.aliyuncs.com/api/v1`；业务空间建议填写专属的 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1`。
+4. 保存后即可由手机通过 HTTPS 直接生成和播放语音，无需电脑或局域网服务。
 
-   ```powershell
-   $env:DASHSCOPE_API_KEY='你的百炼 API Key'
-   $env:DASHSCOPE_BASE_URL='https://你的WorkspaceId.cn-beijing.maas.aliyuncs.com/api/v1'
-   ```
-
-   北京地域建议使用业务空间专属地址；API Key 必须与所选地域一致。也可参考 `server/.env.example` 中的国际站公共地址。
-3. 启动后端：`node server.js`。
-4. 使用 Android Studio 打开项目并等待 Gradle 同步完成。
-5. 使用 Android 8.0（API 26）或更高版本的设备运行。
-
-在真机上，点击阅读器右上角的设置按钮，填写电脑的局域网地址，例如 `http://192.168.50.149:8787`；手机与电脑需要连接同一网络，电脑防火墙需允许 8787 端口。模拟器使用 `http://10.0.2.2:8787`。生产环境应填写已部署的 HTTPS 地址，并在服务端加入用户认证、速率限制和费用配额。API 密钥只能配置在后端，不能写入 Android 工程。
+API Key 使用 Android Keystore 加密，仅存放在应用私有数据中，不会写入安装包、书籍或 GitHub。直接在客户端使用个人 Key 适合个人使用；面向公众分发时仍应改用带身份认证和用量限制的服务端，避免共享密钥被滥用。仓库中的 `server` 目录继续保留，供此类正式部署使用。
 
 如果命令行只安装了 Java 25，请在 Android Studio 中将 Gradle JDK 设为内置的 JDK 17/21。项目目录包含中文时已通过 `android.overridePathCheck=true` 允许构建。
 

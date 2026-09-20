@@ -12,14 +12,12 @@ android {
         applicationId = "com.storyvoice.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
-        buildConfigField("String", "NARRATION_API_URL", "\"http://192.168.50.149:8787\"")
+        versionCode = 3
+        versionName = "0.2.0"
     }
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 
     compileOptions {

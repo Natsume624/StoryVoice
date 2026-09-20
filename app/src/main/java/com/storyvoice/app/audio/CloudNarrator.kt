@@ -3,20 +3,26 @@ package com.storyvoice.app.audio
 import android.content.Context
 import android.media.MediaPlayer
 import android.media.PlaybackParams
-import com.storyvoice.app.BuildConfig
+import android.util.Base64
+import com.storyvoice.app.data.SecureSettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
 
 data class NarrationState(
@@ -31,7 +37,9 @@ data class NarrationState(
     val currentOffset: Int = 0,
     val voiceId: String = "Cindy",
     val voiceLabel: String = "台湾故事姐姐",
-    val serverUrl: String = "",
+    val apiConfigured: Boolean = false,
+    val endpoint: String = SecureSettingsStore.DEFAULT_ENDPOINT,
+    val sleepTimerSeconds: Int? = null,
     val error: String? = null
 )
 
@@ -56,12 +64,11 @@ class CloudNarrator(context: Context) {
         NarrationVoice("auto", "自动多角色", "旁白与角色自动使用不同音色")
     )
     private val appContext = context.applicationContext
-    private val preferences = appContext.getSharedPreferences("narration_settings", Context.MODE_PRIVATE)
-    private var serverUrl = preferences.getString("server_url", BuildConfig.NARRATION_API_URL)
-        ?.normalizeServerUrl() ?: BuildConfig.NARRATION_API_URL
+    private val settings = SecureSettingsStore(appContext)
+    private var endpoint = settings.endpoint
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val cacheDir = File(appContext.cacheDir, "narration").apply { mkdirs() }
-    private val _state = MutableStateFlow(NarrationState(serverUrl = serverUrl))
+    private val _state = MutableStateFlow(NarrationState(apiConfigured = settings.hasApiKey(), endpoint = endpoint))
     val state: StateFlow<NarrationState> = _state.asStateFlow()
     private var player: MediaPlayer? = null
     private var segments = emptyList<SpeechSegment>()
@@ -69,6 +76,7 @@ class CloudNarrator(context: Context) {
     private var speed = 1f
     private var expressiveness = .96f
     private var selectedVoice = "Cindy"
+    private var sleepTimerJob: Job? = null
 
     fun play(text: String) {
         if (segments.isNotEmpty() && current >= segments.size) {
@@ -95,7 +103,11 @@ class CloudNarrator(context: Context) {
         player?.release(); player = null
         segments = emptyList(); current = 0
         val voice = availableVoices.first { it.id == selectedVoice }
-        _state.value = NarrationState(voiceId = voice.id, voiceLabel = voice.label, serverUrl = serverUrl)
+        _state.value = _state.value.copy(
+            isPlaying = false, isLoading = false, currentChunk = 0, totalChunks = 0,
+            speaker = "旁白", emotion = "自然", currentText = "", currentOffset = 0,
+            voiceId = voice.id, voiceLabel = voice.label, error = null
+        )
     }
 
     fun seekTo(fraction: Float) {
@@ -129,24 +141,53 @@ class CloudNarrator(context: Context) {
         )
     }
 
-    fun setServerUrl(value: String): Boolean {
-        val normalized = value.normalizeServerUrl()
-        if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
-            _state.value = _state.value.copy(error = "服务地址必须以 http:// 或 https:// 开头")
+    fun configureCloud(apiKey: String, endpointValue: String): Boolean {
+        val normalized = endpointValue.trim().trimEnd('/')
+        if (!normalized.startsWith("https://")) {
+            _state.value = _state.value.copy(error = "阿里云地址必须以 https:// 开头")
             return false
         }
-        serverUrl = normalized
-        preferences.edit().putString("server_url", serverUrl).apply()
+        if (apiKey.isNotBlank()) settings.saveApiKey(apiKey)
+        if (!settings.hasApiKey()) {
+            _state.value = _state.value.copy(error = "请填写阿里云百炼 API Key")
+            return false
+        }
+        endpoint = normalized
+        settings.endpoint = normalized
         stop()
-        _state.value = _state.value.copy(serverUrl = serverUrl, error = null)
+        _state.value = _state.value.copy(apiConfigured = true, endpoint = endpoint, error = null)
         return true
     }
 
+    fun setSleepTimer(minutes: Int?) {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        if (minutes == null) {
+            _state.value = _state.value.copy(sleepTimerSeconds = null)
+            return
+        }
+        sleepTimerJob = scope.launch {
+            var remaining = minutes * 60
+            _state.value = _state.value.copy(sleepTimerSeconds = remaining)
+            while (remaining > 0) {
+                delay(1_000)
+                remaining--
+                _state.value = _state.value.copy(sleepTimerSeconds = remaining)
+            }
+            pause()
+            _state.value = _state.value.copy(sleepTimerSeconds = null)
+        }
+    }
+
     fun shutdown() {
-        player?.release(); player = null; scope.cancel()
+        sleepTimerJob?.cancel(); player?.release(); player = null; scope.cancel()
     }
 
     private fun prepareStory(text: String) {
+        if (!settings.hasApiKey()) {
+            _state.value = _state.value.copy(error = "请先点击设置，填写阿里云百炼 API Key")
+            return
+        }
         scope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
             runCatching { withContext(Dispatchers.IO) { requestPlan(text) } }
@@ -208,9 +249,26 @@ class CloudNarrator(context: Context) {
     }
 
     private fun requestPlanChunk(text: String): List<SpeechSegment> {
-        val payload = JSONObject().put("text", text)
-        val response = postJson("/api/plan", payload)
-        val array = response.getJSONArray("segments")
+        val instruction = """
+            你是中文有声书导演。把输入原文切成适合逐段配音的片段。
+            必须逐字保留全部原文，不得改写、删减或新增内容。
+            叙述使用 narrator；人物台词稳定映射到 character_1 至 character_3。
+            每段为完整句子且不超过350个汉字，emotion 只能是 neutral、warm、joy、sad、tense、angry、whisper、solemn。
+            只返回 JSON：{"segments":[{"text":"原文","speaker":"narrator","emotion":"warm"}]}。
+        """.trimIndent()
+        val messages = org.json.JSONArray()
+            .put(JSONObject().put("role", "system").put("content", instruction))
+            .put(JSONObject().put("role", "user").put("content", text))
+        val payload = JSONObject()
+            .put("model", "qwen3.8-flash")
+            .put("messages", messages)
+            .put("enable_thinking", false)
+            .put("response_format", JSONObject().put("type", "json_object"))
+        val response = postJsonAbsolute("${compatibleEndpoint()}/chat/completions", payload)
+        val content = response.getJSONArray("choices").getJSONObject(0)
+            .getJSONObject("message").getString("content")
+            .trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        val array = JSONObject(content).getJSONArray("segments")
         return (0 until array.length()).map { index ->
             array.getJSONObject(index).let {
                 SpeechSegment(it.getString("text"), it.getString("speaker"), it.getString("emotion"))
@@ -243,27 +301,79 @@ class CloudNarrator(context: Context) {
         val cacheKey = sha256("$selectedVoice|${segment.speaker}|${segment.emotion}|$expressiveness|${segment.text}")
         val file = File(cacheDir, "$cacheKey.audio")
         if (file.exists() && file.length() > 0) return file
-        val payload = JSONObject()
-            .put("text", segment.text)
-            .put("speaker", segment.speaker)
-            .put("emotion", segment.emotion)
-            .put("voice", selectedVoice)
-            .put("expressiveness", expressiveness)
-        val connection = openConnection("/api/speech").apply {
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
+        val voice = if (selectedVoice == "auto") when (segment.speaker) {
+            "character_1" -> "Serena"; "character_2" -> "Cherry"; "character_3" -> "Chelsie"; else -> "Ethan"
+        } else selectedVoice
+        val audio = if (voice == "Cindy" || voice == "Tina") {
+            createOmniSpeech(segment, voice)
+        } else {
+            createTtsSpeech(segment, voice)
         }
-        connection.outputStream.use { it.write(payload.toString().toByteArray()) }
-        if (connection.responseCode !in 200..299) error(readError(connection))
-        connection.inputStream.use { input -> file.outputStream().use(input::copyTo) }
-        connection.disconnect()
+        file.outputStream().use { it.write(audio) }
         return file
     }
 
-    private fun postJson(path: String, body: JSONObject): JSONObject {
-        val connection = openConnection(path).apply {
+    private fun createTtsSpeech(segment: SpeechSegment, voice: String): ByteArray {
+        val payload = JSONObject().put("model", "qwen3-tts-instruct-flash").put("input", JSONObject()
+            .put("text", segment.text).put("voice", voice).put("language_type", "Chinese")
+            .put("instructions", storyDirection(segment)).put("optimize_instructions", true))
+        val response = postJsonAbsolute("$endpoint/services/aigc/multimodal-generation/generation", payload)
+        val audioUrl = response.optJSONObject("output")?.optJSONObject("audio")?.optString("url")
+            ?.takeIf { it.isNotBlank() } ?: error("阿里云未返回音频地址：${response.optString("message", "未知错误")}")
+        val connection = URL(audioUrl).openConnection() as HttpURLConnection
+        connection.connectTimeout = 20_000; connection.readTimeout = 90_000
+        if (connection.responseCode !in 200..299) error("下载阿里云音频失败（HTTP ${connection.responseCode}）")
+        return connection.inputStream.use { it.readBytes() }.also { connection.disconnect() }
+    }
+
+    private fun createOmniSpeech(segment: SpeechSegment, voice: String): ByteArray {
+        val messages = org.json.JSONArray()
+            .put(JSONObject().put("role", "system").put("content", storyDirection(segment) + if (voice == "Cindy") "\n使用明显的台湾国语口音，咬字柔软圆润、语调轻扬，像温柔的台湾幼稚园老师讲睡前故事。" else "\n声音甜美温暖。"))
+            .put(JSONObject().put("role", "user").put("content", segment.text))
+        val payload = JSONObject().put("model", "qwen3.5-omni-plus").put("messages", messages)
+            .put("modalities", org.json.JSONArray().put("text").put("audio"))
+            .put("audio", JSONObject().put("voice", voice).put("format", "wav"))
+            .put("stream", true)
+        val connection = authorizedConnection("${compatibleEndpoint()}/chat/completions").apply { doOutput = true }
+        connection.outputStream.use { it.write(payload.toString().toByteArray()) }
+        if (connection.responseCode !in 200..299) error(readError(connection))
+        val bytes = ByteArrayOutputStream()
+        connection.inputStream.bufferedReader().useLines { lines ->
+            lines.filter { it.startsWith("data:") }.forEach { line ->
+                val data = line.removePrefix("data:").trim()
+                if (data.isNotBlank() && data != "[DONE]") {
+                    val encoded = runCatching { JSONObject(data).getJSONArray("choices").getJSONObject(0)
+                        .getJSONObject("delta").optJSONObject("audio")?.optString("data") }.getOrNull()
+                    if (!encoded.isNullOrBlank()) bytes.write(Base64.decode(encoded, Base64.DEFAULT))
+                }
+            }
+        }
+        connection.disconnect()
+        val raw = bytes.toByteArray()
+        if (raw.isEmpty()) error("阿里云没有返回音频数据")
+        return if (raw.size >= 4 && String(raw, 0, 4) == "RIFF") raw else pcmToWav(raw)
+    }
+
+    private fun storyDirection(segment: SpeechSegment): String {
+        val emotion = mapOf(
+            "neutral" to "自然克制", "warm" to "温暖亲切", "joy" to "愉悦明亮", "sad" to "低沉悲伤",
+            "tense" to "紧张克制", "angry" to "压抑而有力量", "whisper" to "轻声低语", "solemn" to "庄重沉稳"
+        )[segment.emotion] ?: "自然温柔"
+        return "像有耐心的幼儿园老师给小朋友讲睡前故事。声音温柔、甜美、柔软，语速稍慢，停顿自然。本段情绪：$emotion，强度 ${(expressiveness * 100).toInt()}%。逐字朗读原文，不增删内容。"
+    }
+
+    private fun pcmToWav(pcm: ByteArray): ByteArray {
+        val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
+        header.put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVE".toByteArray())
+        header.put("fmt ".toByteArray()).putInt(16).putShort(1.toShort()).putShort(1.toShort())
+        header.putInt(24_000).putInt(48_000).putShort(2.toShort()).putShort(16.toShort())
+        header.put("data".toByteArray()).putInt(pcm.size)
+        return header.array() + pcm
+    }
+
+    private fun postJsonAbsolute(url: String, body: JSONObject): JSONObject {
+        val connection = authorizedConnection(url).apply {
             doOutput = true
-            setRequestProperty("Content-Type", "application/json")
         }
         connection.outputStream.use { it.write(body.toString().toByteArray()) }
         if (connection.responseCode !in 200..299) error(readError(connection))
@@ -272,10 +382,14 @@ class CloudNarrator(context: Context) {
         return JSONObject(result)
     }
 
-    private fun openConnection(path: String) = (URL(serverUrl + path).openConnection() as HttpURLConnection).apply {
+    private fun compatibleEndpoint(): String = endpoint.replace(Regex("/api/v1$"), "/compatible-mode/v1")
+
+    private fun authorizedConnection(url: String) = (URL(url).openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
         connectTimeout = 20_000
         readTimeout = 90_000
+        setRequestProperty("Authorization", "Bearer ${settings.loadApiKey()}")
+        setRequestProperty("Content-Type", "application/json")
     }
 
     private fun readError(connection: HttpURLConnection): String =
@@ -286,7 +400,7 @@ class CloudNarrator(context: Context) {
     private fun showError(error: Throwable) {
         val detail = error.message ?: "云端朗读失败"
         val message = if (detail.contains("failed to connect", ignoreCase = true) || detail.contains("connect", ignoreCase = true)) {
-            "无法连接朗读服务 $serverUrl。请确认电脑端服务已启动、手机与电脑在同一网络，或在设置中更改服务地址。"
+            "无法连接阿里云百炼。请检查手机网络、API 地址和 Key。"
         } else detail
         _state.value = _state.value.copy(isPlaying = false, isLoading = false, error = message)
     }
@@ -307,5 +421,4 @@ class CloudNarrator(context: Context) {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    private fun String.normalizeServerUrl(): String = trim().trimEnd('/')
 }
