@@ -1,5 +1,7 @@
 # 拾声 · StoryVoice
 
+[![Android Build](https://github.com/Natsume624/StoryVoice/actions/workflows/android-build.yml/badge.svg)](https://github.com/Natsume624/StoryVoice/actions/workflows/android-build.yml)
+
 一个面向 Android 的 AI 听书 MVP。它可以从系统文件选择器导入 EPUB 和文字版 PDF，提取章节/页面文字，并通过云端大模型生成接近真人的多角色有声书音频。
 
 ## 已实现
