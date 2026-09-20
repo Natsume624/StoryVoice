@@ -125,11 +125,12 @@ private fun StoryVoiceApp(model: MainViewModel = viewModel()) {
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         AnimatedContent(
-            targetState = state.selectedBook,
+            targetState = state.selectedBook?.id,
             label = "screen",
             modifier = Modifier.padding(padding)
-        ) { book ->
-            if (book == null) {
+        ) { bookId ->
+            val book = state.selectedBook?.takeIf { it.id == bookId }
+            if (bookId == null || book == null) {
                 LibraryScreen(
                     books = state.books,
                     collections = state.collections,
