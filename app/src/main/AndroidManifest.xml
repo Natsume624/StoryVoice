@@ -6,7 +6,7 @@
         android:allowBackup="true"
         android:label="拾声"
         android:theme="@style/Theme.StoryVoice"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
             android:exported="true">

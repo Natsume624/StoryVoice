@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -43,17 +44,22 @@ import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -69,6 +75,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,8 +94,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.storyvoice.app.audio.NarrationState
 import com.storyvoice.app.audio.NarrationVoice
 import com.storyvoice.app.model.Book
+import com.storyvoice.app.model.BookCollection
 import com.storyvoice.app.model.BookFormat
 import com.storyvoice.app.ui.theme.StoryVoiceTheme
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 class MainActivity : ComponentActivity() {
     private val model: MainViewModel by viewModels()
@@ -122,9 +132,14 @@ private fun StoryVoiceApp(model: MainViewModel = viewModel()) {
             if (book == null) {
                 LibraryScreen(
                     books = state.books,
+                    collections = state.collections,
+                    selectedCollectionId = state.selectedCollectionId,
                     isImporting = state.isImporting,
                     onImport = { picker.launch(arrayOf("application/epub+zip", "application/pdf")) },
-                    onBookClick = model::open
+                    onBookClick = model::requestOpen,
+                    onCreateCollection = model::createCollection,
+                    onSelectCollection = model::setCollectionFilter,
+                    onSetBookCollections = model::setBookCollections
                 )
             } else {
                 ReaderScreen(
@@ -142,20 +157,46 @@ private fun StoryVoiceApp(model: MainViewModel = viewModel()) {
                     onRate = model.narrator::setRate,
                     onExpressiveness = model.narrator::setExpressiveness,
                     onVoice = model.narrator::setVoice,
-                    onServerUrl = model.narrator::setServerUrl
+                    initialScrollFraction = book.lastScrollFraction,
+                    onProgress = model::saveProgress,
+                    onConfigureCloud = model.narrator::configureCloud,
+                    onSleepTimer = model.narrator::setSleepTimer
                 )
             }
         }
+    }
+
+    state.pendingResumeBook?.let { book ->
+        AlertDialog(
+            onDismissRequest = model::dismissResume,
+            title = { Text("继续阅读？") },
+            text = { Text("《${book.title}》上次读到 ${(book.progress * 100).toInt()}%，是否从上次位置继续？") },
+            confirmButton = { TextButton(onClick = { model.open(book, true) }) { Text("继续阅读") } },
+            dismissButton = { TextButton(onClick = { model.open(book, false) }) { Text("从头开始") } }
+        )
     }
 }
 
 @Composable
 private fun LibraryScreen(
     books: List<Book>,
+    collections: List<BookCollection>,
+    selectedCollectionId: String?,
     isImporting: Boolean,
     onImport: () -> Unit,
-    onBookClick: (Book) -> Unit
+    onBookClick: (Book) -> Unit,
+    onCreateCollection: (String) -> Unit,
+    onSelectCollection: (String?) -> Unit,
+    onSetBookCollections: (String, Set<String>) -> Unit
 ) {
+    var createCollectionOpen by remember { mutableStateOf(false) }
+    var collectionName by remember { mutableStateOf("") }
+    var manageBook by remember { mutableStateOf<Book?>(null) }
+    val filteredBooks = selectedCollectionId?.let { id ->
+        val ids = collections.firstOrNull { it.id == id }?.bookIds.orEmpty()
+        books.filter { it.id in ids }
+    } ?: books
+    val recentBooks = books.filter { it.lastOpenedAt > 0 }.sortedByDescending { it.lastOpenedAt }.take(3)
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.padding(horizontal = 24.dp, vertical = 22.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -175,6 +216,14 @@ private fun LibraryScreen(
             Spacer(Modifier.height(28.dp))
             Text("我的书架", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
             Text("${books.size} 本书 · 随时继续你的故事", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(14.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { FilterChip(selected = selectedCollectionId == null, onClick = { onSelectCollection(null) }, label = { Text("全部") }) }
+                items(collections, key = { it.id }) { collection ->
+                    FilterChip(selected = selectedCollectionId == collection.id, onClick = { onSelectCollection(collection.id) }, label = { Text(collection.name) })
+                }
+                item { AssistChip(onClick = { collectionName = ""; createCollectionOpen = true }, label = { Text("＋ 新建合集") }) }
+            }
         }
 
         if (books.isEmpty()) {
@@ -185,10 +234,53 @@ private fun LibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 item { ImportCard(isImporting, onImport) }
-                items(books, key = { it.id }) { BookCard(it) { onBookClick(it) } }
+                if (selectedCollectionId == null && recentBooks.isNotEmpty()) {
+                    item { Text("最近阅读", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+                    items(recentBooks, key = { "recent-${it.id}" }) { book ->
+                        BookCard(book, onClick = { onBookClick(book) }, onManage = { manageBook = book })
+                    }
+                    item { Text("全部书籍", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp)) }
+                }
+                items(filteredBooks, key = { "all-${it.id}" }) { book ->
+                    BookCard(book, onClick = { onBookClick(book) }, onManage = { manageBook = book })
+                }
+                if (filteredBooks.isEmpty()) item { Text("这个合集还是空的，可从书籍右侧的菜单加入。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(20.dp)) }
                 item { Spacer(Modifier.height(24.dp)) }
             }
         }
+    }
+
+    if (createCollectionOpen) {
+        AlertDialog(
+            onDismissRequest = { createCollectionOpen = false },
+            title = { Text("新建合集") },
+            text = { OutlinedTextField(value = collectionName, onValueChange = { collectionName = it }, label = { Text("合集名称") }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { onCreateCollection(collectionName); createCollectionOpen = false }) { Text("创建") } },
+            dismissButton = { TextButton(onClick = { createCollectionOpen = false }) { Text("取消") } }
+        )
+    }
+
+    manageBook?.let { book ->
+        var selected by remember(book.id, collections) {
+            mutableStateOf(collections.filter { book.id in it.bookIds }.map { it.id }.toSet())
+        }
+        AlertDialog(
+            onDismissRequest = { manageBook = null },
+            title = { Text("将《${book.title}》加入合集") },
+            text = {
+                Column {
+                    if (collections.isEmpty()) Text("请先新建一个合集。")
+                    collections.forEach { collection ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = collection.id in selected, onCheckedChange = { checked -> selected = if (checked) selected + collection.id else selected - collection.id })
+                            Text(collection.name)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { onSetBookCollections(book.id, selected); manageBook = null }) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { manageBook = null }) { Text("取消") } }
+        )
     }
 }
 
@@ -240,7 +332,7 @@ private fun ImportCard(isImporting: Boolean, onImport: () -> Unit) {
 }
 
 @Composable
-private fun BookCard(book: Book, onClick: () -> Unit) {
+private fun BookCard(book: Book, onClick: () -> Unit, onManage: () -> Unit) {
     Card(onClick = onClick, shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -259,8 +351,12 @@ private fun BookCard(book: Book, onClick: () -> Unit) {
                 Text(book.author, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
                 Spacer(Modifier.height(13.dp))
                 Text("${book.chapters.size} ${if (book.format == BookFormat.PDF) "页" else "章"} · ${book.totalCharacters / 1000} 千字", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                if (book.progress > 0f) {
+                    LinearProgressIndicator(progress = { book.progress }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                    Text("已读 ${(book.progress * 100).toInt()}%", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            Icon(Icons.Rounded.MoreHoriz, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            IconButton(onClick = onManage) { Icon(Icons.Rounded.MoreHoriz, "管理合集", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
@@ -279,7 +375,10 @@ private fun ReaderScreen(
     onRate: (Float) -> Unit,
     onExpressiveness: (Float) -> Unit,
     onVoice: (String) -> Unit,
-    onServerUrl: (String) -> Boolean
+    initialScrollFraction: Float,
+    onProgress: (Int, Float) -> Unit,
+    onConfigureCloud: (String, String) -> Boolean,
+    onSleepTimer: (Int?) -> Unit
 ) {
     val chapter = book.chapters[chapterIndex]
     var rate by remember { mutableFloatStateOf(.9f) }
@@ -287,8 +386,11 @@ private fun ReaderScreen(
     var voiceMenuOpen by remember { mutableStateOf(false) }
     var fontSize by remember { mutableFloatStateOf(19f) }
     var nightMode by remember { mutableStateOf(false) }
-    var serverDialogOpen by remember { mutableStateOf(false) }
-    var serverUrlDraft by remember(narration.serverUrl) { mutableStateOf(narration.serverUrl) }
+    var cloudDialogOpen by remember { mutableStateOf(false) }
+    var apiKeyDraft by remember { mutableStateOf("") }
+    var endpointDraft by remember(narration.endpoint) { mutableStateOf(narration.endpoint) }
+    var timerMenuOpen by remember { mutableStateOf(false) }
+    var hasRestoredScroll by remember(chapterIndex) { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val readingBackground = if (nightMode) Color(0xFF171A18) else MaterialTheme.colorScheme.background
     val readingTextColor = if (nightMode) Color(0xFFE6E2D9) else MaterialTheme.colorScheme.onBackground.copy(alpha = .88f)
@@ -298,7 +400,18 @@ private fun ReaderScreen(
     }
     val progress = if (narration.totalChunks > 0) narration.currentChunk.toFloat() / narration.totalChunks else 0f
 
-    LaunchedEffect(chapterIndex) { scrollState.scrollTo(0) }
+    LaunchedEffect(chapterIndex, scrollState.maxValue) {
+        if (!hasRestoredScroll && scrollState.maxValue > 0) {
+            val fraction = if (chapterIndex == book.lastChapter) initialScrollFraction else 0f
+            scrollState.scrollTo((scrollState.maxValue * fraction).toInt())
+            hasRestoredScroll = true
+        }
+    }
+    LaunchedEffect(chapterIndex, scrollState) {
+        snapshotFlow {
+            if (scrollState.maxValue == 0) 0f else scrollState.value.toFloat() / scrollState.maxValue
+        }.distinctUntilChanged().debounce(800).collect { onProgress(chapterIndex, it) }
+    }
     LaunchedEffect(narration.currentText, scrollState.maxValue) {
         if (narration.currentText.isNotBlank() && narration.isPlaying) {
             val start = narration.currentOffset.takeIf {
@@ -324,9 +437,19 @@ private fun ReaderScreen(
                 Icon(if (nightMode) Icons.Rounded.WbSunny else Icons.Rounded.DarkMode, if (nightMode) "日间模式" else "夜间模式", tint = readingTextColor)
             }
             IconButton(onClick = {
-                serverUrlDraft = narration.serverUrl
-                serverDialogOpen = true
-            }) { Icon(Icons.Rounded.Settings, "朗读服务设置", tint = readingTextColor) }
+                apiKeyDraft = ""
+                endpointDraft = narration.endpoint
+                cloudDialogOpen = true
+            }) { Icon(Icons.Rounded.Settings, "阿里云设置", tint = readingTextColor) }
+            Box {
+                IconButton(onClick = { timerMenuOpen = true }) { Icon(Icons.Rounded.Timer, "定时结束", tint = readingTextColor) }
+                DropdownMenu(expanded = timerMenuOpen, onDismissRequest = { timerMenuOpen = false }) {
+                    listOf(15, 30, 45, 60).forEach { minutes ->
+                        DropdownMenuItem(text = { Text("$minutes 分钟后停止") }, onClick = { onSleepTimer(minutes); timerMenuOpen = false })
+                    }
+                    DropdownMenuItem(text = { Text("关闭定时") }, onClick = { onSleepTimer(null); timerMenuOpen = false })
+                }
+            }
         }
 
         Column(
@@ -398,7 +521,10 @@ private fun ReaderScreen(
                     Slider(value = warmth, onValueChange = { warmth = it; onExpressiveness(it) }, valueRange = 0f..1f, modifier = Modifier.weight(1f))
                 }
                 Text(
-                    "AI 配音 · ${narration.speaker} · ${narration.emotion}",
+                    buildString {
+                        append("AI 配音 · ${narration.speaker} · ${narration.emotion}")
+                        narration.sleepTimerSeconds?.let { seconds -> append(" · ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')} 后停止") }
+                    },
                     color = MaterialTheme.colorScheme.primary,
                     fontSize = 12.sp,
                     modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 2.dp)
@@ -407,27 +533,36 @@ private fun ReaderScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(top = 5.dp))
                         TextButton(onClick = {
-                            serverUrlDraft = narration.serverUrl
-                            serverDialogOpen = true
-                        }) { Text("设置服务") }
+                            apiKeyDraft = ""
+                            endpointDraft = narration.endpoint
+                            cloudDialogOpen = true
+                        }) { Text("阿里云设置") }
                     }
                 }
             }
         }
     }
 
-    if (serverDialogOpen) {
+    if (cloudDialogOpen) {
         AlertDialog(
-            onDismissRequest = { serverDialogOpen = false },
-            title = { Text("朗读服务地址") },
+            onDismissRequest = { cloudDialogOpen = false },
+            title = { Text("阿里云百炼设置") },
             text = {
                 Column {
-                    Text("真机需填写电脑的局域网地址或已部署的 HTTPS 地址。手机与电脑必须在同一网络。")
+                    Text("填写后手机会直接连接阿里云，不再依赖电脑。API Key 使用 Android 系统密钥加密后仅保存在本机。")
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
-                        value = serverUrlDraft,
-                        onValueChange = { serverUrlDraft = it },
-                        label = { Text("例如 http://192.168.50.149:8787") },
+                        value = apiKeyDraft,
+                        onValueChange = { apiKeyDraft = it },
+                        label = { Text(if (narration.apiConfigured) "API Key（留空则保持不变）" else "API Key") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = endpointDraft,
+                        onValueChange = { endpointDraft = it },
+                        label = { Text("API 地址") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -435,10 +570,10 @@ private fun ReaderScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (onServerUrl(serverUrlDraft)) serverDialogOpen = false
+                    if (onConfigureCloud(apiKeyDraft, endpointDraft)) cloudDialogOpen = false
                 }) { Text("保存") }
             },
-            dismissButton = { TextButton(onClick = { serverDialogOpen = false }) { Text("取消") } }
+            dismissButton = { TextButton(onClick = { cloudDialogOpen = false }) { Text("取消") } }
         )
     }
 }
