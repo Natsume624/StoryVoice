@@ -31,9 +31,9 @@
    北京地域建议使用业务空间专属地址；API Key 必须与所选地域一致。也可参考 `server/.env.example` 中的国际站公共地址。
 3. 启动后端：`node server.js`。
 4. 使用 Android Studio 打开项目并等待 Gradle 同步完成。
-5. 使用 Android 8.0（API 26）或更高版本的模拟器运行。模拟器默认通过 `10.0.2.2:8787` 访问本机后端。
+5. 使用 Android 8.0（API 26）或更高版本的设备运行。
 
-真机调试时，请把 `app/build.gradle.kts` 中的 `NARRATION_API_URL` 改为电脑的局域网地址。生产环境必须使用 HTTPS，并在服务端加入用户认证、速率限制和费用配额。API 密钥只能配置在后端，不能写入 Android 工程。
+在真机上，点击阅读器右上角的设置按钮，填写电脑的局域网地址，例如 `http://192.168.50.149:8787`；手机与电脑需要连接同一网络，电脑防火墙需允许 8787 端口。模拟器使用 `http://10.0.2.2:8787`。生产环境应填写已部署的 HTTPS 地址，并在服务端加入用户认证、速率限制和费用配额。API 密钥只能配置在后端，不能写入 Android 工程。
 
 如果命令行只安装了 Java 25，请在 Android Studio 中将 Gradle JDK 设为内置的 JDK 17/21。项目目录包含中文时已通过 `android.overridePathCheck=true` 允许构建。
 
