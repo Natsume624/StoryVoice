@@ -12,9 +12,9 @@ android {
         applicationId = "com.storyvoice.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
-        buildConfigField("String", "NARRATION_API_URL", "\"http://10.0.2.2:8787\"")
+        versionCode = 2
+        versionName = "0.1.1"
+        buildConfigField("String", "NARRATION_API_URL", "\"http://192.168.50.149:8787\"")
     }
 
     buildFeatures {

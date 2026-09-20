@@ -31,6 +31,7 @@ data class NarrationState(
     val currentOffset: Int = 0,
     val voiceId: String = "Cindy",
     val voiceLabel: String = "台湾故事姐姐",
+    val serverUrl: String = "",
     val error: String? = null
 )
 
@@ -55,9 +56,12 @@ class CloudNarrator(context: Context) {
         NarrationVoice("auto", "自动多角色", "旁白与角色自动使用不同音色")
     )
     private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences("narration_settings", Context.MODE_PRIVATE)
+    private var serverUrl = preferences.getString("server_url", BuildConfig.NARRATION_API_URL)
+        ?.normalizeServerUrl() ?: BuildConfig.NARRATION_API_URL
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val cacheDir = File(appContext.cacheDir, "narration").apply { mkdirs() }
-    private val _state = MutableStateFlow(NarrationState())
+    private val _state = MutableStateFlow(NarrationState(serverUrl = serverUrl))
     val state: StateFlow<NarrationState> = _state.asStateFlow()
     private var player: MediaPlayer? = null
     private var segments = emptyList<SpeechSegment>()
@@ -91,7 +95,7 @@ class CloudNarrator(context: Context) {
         player?.release(); player = null
         segments = emptyList(); current = 0
         val voice = availableVoices.first { it.id == selectedVoice }
-        _state.value = NarrationState(voiceId = voice.id, voiceLabel = voice.label)
+        _state.value = NarrationState(voiceId = voice.id, voiceLabel = voice.label, serverUrl = serverUrl)
     }
 
     fun seekTo(fraction: Float) {
@@ -123,6 +127,19 @@ class CloudNarrator(context: Context) {
             voiceId = voice.id,
             voiceLabel = voice.label
         )
+    }
+
+    fun setServerUrl(value: String): Boolean {
+        val normalized = value.normalizeServerUrl()
+        if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+            _state.value = _state.value.copy(error = "服务地址必须以 http:// 或 https:// 开头")
+            return false
+        }
+        serverUrl = normalized
+        preferences.edit().putString("server_url", serverUrl).apply()
+        stop()
+        _state.value = _state.value.copy(serverUrl = serverUrl, error = null)
+        return true
     }
 
     fun shutdown() {
@@ -255,7 +272,7 @@ class CloudNarrator(context: Context) {
         return JSONObject(result)
     }
 
-    private fun openConnection(path: String) = (URL(BuildConfig.NARRATION_API_URL + path).openConnection() as HttpURLConnection).apply {
+    private fun openConnection(path: String) = (URL(serverUrl + path).openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
         connectTimeout = 20_000
         readTimeout = 90_000
@@ -267,7 +284,11 @@ class CloudNarrator(context: Context) {
         }?.takeIf { it.isNotBlank() } ?: "云端朗读服务不可用（HTTP ${connection.responseCode}）"
 
     private fun showError(error: Throwable) {
-        _state.value = _state.value.copy(isPlaying = false, isLoading = false, error = error.message ?: "云端朗读失败")
+        val detail = error.message ?: "云端朗读失败"
+        val message = if (detail.contains("failed to connect", ignoreCase = true) || detail.contains("connect", ignoreCase = true)) {
+            "无法连接朗读服务 $serverUrl。请确认电脑端服务已启动、手机与电脑在同一网络，或在设置中更改服务地址。"
+        } else detail
+        _state.value = _state.value.copy(isPlaying = false, isLoading = false, error = message)
     }
 
     private fun speakerLabel(value: String) = when (value) {
@@ -285,4 +306,6 @@ class CloudNarrator(context: Context) {
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    private fun String.normalizeServerUrl(): String = trim().trimEnd('/')
 }

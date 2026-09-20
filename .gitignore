@@ -7,4 +7,6 @@ captures/
 .externalNativeBuild/
 .cxx/
 server/.env
+server/*.log
+release-artifacts/
 *-sample.wav

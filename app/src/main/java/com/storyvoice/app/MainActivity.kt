@@ -42,6 +42,8 @@ import androidx.compose.material.icons.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -52,6 +54,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
@@ -138,7 +141,8 @@ private fun StoryVoiceApp(model: MainViewModel = viewModel()) {
                     onSeek = model.narrator::seekTo,
                     onRate = model.narrator::setRate,
                     onExpressiveness = model.narrator::setExpressiveness,
-                    onVoice = model.narrator::setVoice
+                    onVoice = model.narrator::setVoice,
+                    onServerUrl = model.narrator::setServerUrl
                 )
             }
         }
@@ -274,7 +278,8 @@ private fun ReaderScreen(
     onSeek: (Float) -> Unit,
     onRate: (Float) -> Unit,
     onExpressiveness: (Float) -> Unit,
-    onVoice: (String) -> Unit
+    onVoice: (String) -> Unit,
+    onServerUrl: (String) -> Boolean
 ) {
     val chapter = book.chapters[chapterIndex]
     var rate by remember { mutableFloatStateOf(.9f) }
@@ -282,6 +287,8 @@ private fun ReaderScreen(
     var voiceMenuOpen by remember { mutableStateOf(false) }
     var fontSize by remember { mutableFloatStateOf(19f) }
     var nightMode by remember { mutableStateOf(false) }
+    var serverDialogOpen by remember { mutableStateOf(false) }
+    var serverUrlDraft by remember(narration.serverUrl) { mutableStateOf(narration.serverUrl) }
     val scrollState = rememberScrollState()
     val readingBackground = if (nightMode) Color(0xFF171A18) else MaterialTheme.colorScheme.background
     val readingTextColor = if (nightMode) Color(0xFFE6E2D9) else MaterialTheme.colorScheme.onBackground.copy(alpha = .88f)
@@ -316,6 +323,10 @@ private fun ReaderScreen(
             IconButton(onClick = { nightMode = !nightMode }) {
                 Icon(if (nightMode) Icons.Rounded.WbSunny else Icons.Rounded.DarkMode, if (nightMode) "日间模式" else "夜间模式", tint = readingTextColor)
             }
+            IconButton(onClick = {
+                serverUrlDraft = narration.serverUrl
+                serverDialogOpen = true
+            }) { Icon(Icons.Rounded.Settings, "朗读服务设置", tint = readingTextColor) }
         }
 
         Column(
@@ -393,10 +404,42 @@ private fun ReaderScreen(
                     modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 2.dp)
                 )
                 narration.error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(top = 5.dp))
+                        TextButton(onClick = {
+                            serverUrlDraft = narration.serverUrl
+                            serverDialogOpen = true
+                        }) { Text("设置服务") }
+                    }
                 }
             }
         }
+    }
+
+    if (serverDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { serverDialogOpen = false },
+            title = { Text("朗读服务地址") },
+            text = {
+                Column {
+                    Text("真机需填写电脑的局域网地址或已部署的 HTTPS 地址。手机与电脑必须在同一网络。")
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = serverUrlDraft,
+                        onValueChange = { serverUrlDraft = it },
+                        label = { Text("例如 http://192.168.50.149:8787") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (onServerUrl(serverUrlDraft)) serverDialogOpen = false
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { serverDialogOpen = false }) { Text("取消") } }
+        )
     }
 }
 
