@@ -1,0 +1,62 @@
+name: Android Runtime Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0 emulator system-images;android-35;google_apis;x86_64"
+
+      - name: Build and launch on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            chmod +x gradlew
+            ./gradlew :app:assembleDebug
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb logcat -c
+            adb shell am start -W -n com.storyvoice.app/.MainActivity | tee launch-result.txt
+            sleep 5
+            adb shell uiautomator dump /sdcard/storyvoice-window.xml
+            adb pull /sdcard/storyvoice-window.xml storyvoice-window.xml
+            grep -q "拾声" storyvoice-window.xml
+            adb exec-out screencap -p > storyvoice-launch.png
+            adb logcat -d > storyvoice-logcat.txt
+            if grep -E "FATAL EXCEPTION|ANR in com.storyvoice" storyvoice-logcat.txt; then exit 1; fi
+
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: StoryVoice-runtime-evidence
+          path: |
+            launch-result.txt
+            storyvoice-window.xml
+            storyvoice-launch.png
+            storyvoice-logcat.txt
+          if-no-files-found: warn

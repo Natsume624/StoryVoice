@@ -13,13 +13,32 @@ class LibraryStore(context: Context) {
 
     fun load(): List<Book> = runCatching {
         val array = JSONArray(prefs.getString("books", "[]"))
-        (0 until array.length()).map { index -> array.getJSONObject(index).toBook() }
+        (0 until array.length()).map { index -> applySavedProgress(array.getJSONObject(index).toBook()) }
     }.getOrDefault(emptyList())
 
     fun save(books: List<Book>) {
         val array = JSONArray().apply { books.forEach { put(it.toJson()) } }
         prefs.edit().putString("books", array.toString()).apply()
     }
+
+    fun saveProgress(book: Book) {
+        val value = JSONObject()
+            .put("progress", book.progress)
+            .put("lastChapter", book.lastChapter)
+            .put("lastScrollFraction", book.lastScrollFraction)
+            .put("lastOpenedAt", book.lastOpenedAt)
+        prefs.edit().putString("progress_${book.id}", value.toString()).apply()
+    }
+
+    private fun applySavedProgress(book: Book): Book = runCatching {
+        val value = JSONObject(prefs.getString("progress_${book.id}", null) ?: return@runCatching book)
+        book.copy(
+            progress = value.optDouble("progress", book.progress.toDouble()).toFloat(),
+            lastChapter = value.optInt("lastChapter", book.lastChapter),
+            lastScrollFraction = value.optDouble("lastScrollFraction", book.lastScrollFraction.toDouble()).toFloat(),
+            lastOpenedAt = value.optLong("lastOpenedAt", book.lastOpenedAt)
+        )
+    }.getOrDefault(book)
 
     fun loadCollections(): List<BookCollection> = runCatching {
         val array = JSONArray(prefs.getString("collections", "[]"))

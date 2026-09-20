@@ -4,7 +4,9 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="拾声"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.StoryVoice"
         android:usesCleartextTraffic="false">
         <activity

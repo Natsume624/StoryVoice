@@ -54,7 +54,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         narrator.stop()
         val opened = book.copy(lastOpenedAt = System.currentTimeMillis())
         val books = _state.value.books.map { if (it.id == book.id) opened else it }
-        store.save(books)
+        store.saveProgress(opened)
         _state.value = _state.value.copy(
             books = books,
             selectedBook = opened,
@@ -88,7 +88,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             lastOpenedAt = System.currentTimeMillis()
         )
         val books = _state.value.books.map { if (it.id == updated.id) updated else it }
-        store.save(books)
+        store.saveProgress(updated)
         _state.value = _state.value.copy(books = books, selectedBook = updated)
     }
 
