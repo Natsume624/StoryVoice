@@ -135,6 +135,7 @@ private fun StoryVoiceApp(model: MainViewModel = viewModel()) {
                     books = state.books,
                     collections = state.collections,
                     selectedCollectionId = state.selectedCollectionId,
+                    isLoadingLibrary = state.isLoadingLibrary,
                     isImporting = state.isImporting,
                     onImport = { picker.launch(arrayOf("application/epub+zip", "application/pdf")) },
                     onBookClick = model::requestOpen,
@@ -183,6 +184,7 @@ private fun LibraryScreen(
     books: List<Book>,
     collections: List<BookCollection>,
     selectedCollectionId: String?,
+    isLoadingLibrary: Boolean,
     isImporting: Boolean,
     onImport: () -> Unit,
     onBookClick: (Book) -> Unit,
@@ -227,7 +229,14 @@ private fun LibraryScreen(
             }
         }
 
-        if (books.isEmpty()) {
+        if (isLoadingLibrary) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Text("正在打开书架…", modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } else if (books.isEmpty()) {
             EmptyLibrary(isImporting, onImport)
         } else {
             LazyColumn(
