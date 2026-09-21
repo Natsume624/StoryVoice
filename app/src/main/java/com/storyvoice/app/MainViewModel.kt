@@ -13,9 +13,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class AppState(
     val books: List<Book> = emptyList(),
+    val isLoadingLibrary: Boolean = true,
     val collections: List<BookCollection> = emptyList(),
     val selectedCollectionId: String? = null,
     val selectedBook: Book? = null,
@@ -29,20 +32,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val parser = BookParser(application)
     private val store = LibraryStore(application)
     val narrator = CloudNarrator(application)
-    private val _state = MutableStateFlow(AppState(books = store.load(), collections = store.loadCollections()))
+    private val _state = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = _state.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val (books, collections) = withContext(Dispatchers.IO) {
+                store.load() to store.loadCollections()
+            }
+            _state.value = _state.value.copy(books = books, collections = collections, isLoadingLibrary = false)
+        }
+    }
 
     fun import(uri: Uri) = viewModelScope.launch {
         _state.value = _state.value.copy(isImporting = true, message = null)
-        runCatching { parser.import(uri) }
-            .onSuccess { book ->
-                val books = listOf(book) + _state.value.books.filterNot { it.id == book.id }
-                store.save(books)
-                _state.value = _state.value.copy(books = books, isImporting = false, message = "《${book.title}》已加入书架")
-            }
-            .onFailure { error ->
-                _state.value = _state.value.copy(isImporting = false, message = error.message ?: "导入失败")
-            }
+        try {
+            val book = parser.import(uri)
+            val books = listOf(book) + _state.value.books.filterNot { it.id == book.id }
+            withContext(Dispatchers.IO) { store.save(books) }
+            _state.value = _state.value.copy(books = books, isImporting = false, message = "《${book.title}》已加入书架")
+        } catch (error: Throwable) {
+            _state.value = _state.value.copy(isImporting = false, message = error.message ?: "导入失败")
+        }
     }
 
     fun requestOpen(book: Book) {

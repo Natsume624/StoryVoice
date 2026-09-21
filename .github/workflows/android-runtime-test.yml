@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   runtime-test:
-    runs-on: macos-13
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -26,15 +26,16 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: "platform-tools platforms;android-35 build-tools;35.0.0 emulator system-images;android-34;google_apis;x86_64"
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0 emulator system-images;android-29;google_apis;x86_64"
 
       - name: Build and launch on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 29
           target: google_apis
           arch: x86_64
           disable-animations: true
+          emulator-boot-timeout: 1200
           script: |
             chmod +x gradlew
             ./gradlew :app:assembleDebug
