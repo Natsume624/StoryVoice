@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:libb64",
+  "name": "libb64",
+  "artifactVersion": "",
+  "description": "Base64 encoder/decoder library written in C.",
+  "website": "https://sourceforge.net/projects/libb64/",
+  "licenses": ["Public-Domain"],
+  "developers": [],
+  "tag": "native"
+}

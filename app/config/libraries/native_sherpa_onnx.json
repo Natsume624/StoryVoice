@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:sherpa-onnx",
+  "name": "sherpa-onnx",
+  "artifactVersion": "1.12.15",
+  "description": "On-device speech processing engine (k2-fsa), used here for offline text-to-speech.",
+  "website": "https://github.com/k2-fsa/sherpa-onnx",
+  "licenses": ["Apache-2.0"],
+  "developers": [],
+  "tag": "native"
+}

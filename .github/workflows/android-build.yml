@@ -1,15 +1,15 @@
-name: Android Build
+name: Build StoryVoice Android
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/offline-reader]
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish v0.2.1 to GitHub Releases"
-        required: false
-        default: false
+        description: Publish v0.3.0 and the offline voice model
+        required: true
         type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -17,14 +17,14 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
-      - name: Checkout
+      - name: Check out source
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
@@ -32,29 +32,81 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
 
-      - name: Build debug APK
+      - name: Install Android packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.13599879"
+
+      - name: Create local Firebase placeholder
+        run: |
+          cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "100000000000",
+              "project_id": "storyvoice-local",
+              "storage_bucket": "storyvoice-local.appspot.com"
+            },
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:100000000000:android:0000000000000000000000",
+                "android_client_info": { "package_name": "com.storyvoice.app" }
+              },
+              "api_key": [{ "current_key": "AIzaSyStoryVoiceLocalPlaceholder000000000" }]
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+
+      - name: Build installable APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --stacktrace
+          ./gradlew clean :app:assembleDebug --stacktrace
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk StoryVoice-v0.2.1.apk
+      - name: Collect APK
+        run: |
+          mkdir -p release-artifacts
+          cp app/build/outputs/apk/debug/*.apk release-artifacts/StoryVoice-v0.3.0.apk
+          sha256sum release-artifacts/StoryVoice-v0.3.0.apk > release-artifacts/SHA256SUMS.txt
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StoryVoice-v0.2.1
-          path: StoryVoice-v0.2.1.apk
-          if-no-files-found: error
-          retention-days: 30
+          name: StoryVoice-v0.3.0
+          path: release-artifacts/*
 
-      - name: Publish v0.2.1
+      - name: Package offline Taiwan voice model
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v0.2.1 || gh release create v0.2.1 --title "StoryVoice v0.2.1" --prerelease --notes "修复书架与阅读页面卡顿：书架和大文件写入改为后台处理，阅读进度不再反复写入整本正文；加入全新的拾声品牌图标。"
-          gh release upload v0.2.1 StoryVoice-v0.2.1.apk --clobber
+          curl -L --fail --retry 4 -o zipvoice.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2
+          tar -xjf zipvoice.tar.bz2
+          mv sherpa-onnx-zipvoice-distill-int8-zh-en-emilia zipvoice-zh-TW-taiwan-story-voice
+          curl -L --fail --retry 4 -o zipvoice-zh-TW-taiwan-story-voice/vocos_24khz.onnx \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx
+          curl -L --fail --retry 4 -o zipvoice-zh-TW-taiwan-story-voice/ZIPVOICE-LICENSE \
+            https://raw.githubusercontent.com/k2-fsa/ZipVoice/master/LICENSE
+          zip -9 -r release-artifacts/StoryVoice-ZipVoice-zh-TW.zip zipvoice-zh-TW-taiwan-story-voice
+          sha256sum release-artifacts/StoryVoice-ZipVoice-zh-TW.zip >> release-artifacts/SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.3.0
+          name: StoryVoice v0.3.0 - 离线台湾故事音色
+          body: |
+            这一版改为成熟的本地阅读器底座，并加入完全离线的“台湾故事姐姐”音色。
+
+            - 不再依赖 10.0.2.2、本地电脑服务、阿里云或 Android 系统 TTS
+            - 支持 EPUB、PDF 与多种电子书格式
+            - 支持阅读进度、继续阅读、最近阅读、书架合集、后台播放和定时停止
+            - 首次使用时在语音模型页下载约 165 MB 的模型，之后可断网朗读
+
+            安装 `StoryVoice-v0.3.0.apk`。模型由应用内自动下载，无需手动解压。
+          files: |
+            release-artifacts/StoryVoice-v0.3.0.apk
+            release-artifacts/StoryVoice-ZipVoice-zh-TW.zip
+            release-artifacts/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: false

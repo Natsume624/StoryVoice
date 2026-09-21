@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:openjpeg",
+  "name": "OpenJPEG",
+  "artifactVersion": "2.4.0",
+  "description": "Open-source JPEG 2000 codec written in C.",
+  "website": "https://github.com/uclouvain/openjpeg",
+  "licenses": ["BSD-2-Clause"],
+  "developers": [],
+  "tag": "native"
+}

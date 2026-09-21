@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:onnxruntime",
+  "name": "ONNX Runtime",
+  "artifactVersion": "1.27.1",
+  "description": "Cross-platform accelerator for running ONNX machine learning models.",
+  "website": "https://github.com/microsoft/onnxruntime",
+  "licenses": ["MIT"],
+  "developers": [],
+  "tag": "native"
+}

@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:libxml2",
+  "name": "libxml2",
+  "artifactVersion": "",
+  "description": "XML parser and toolkit written in C.",
+  "website": "https://gitlab.gnome.org/GNOME/libxml2",
+  "licenses": ["MIT"],
+  "developers": [],
+  "tag": "native"
+}

@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:tidy-html5",
+  "name": "tidy-html5",
+  "artifactVersion": "5.8.0",
+  "description": "HTML5 cleaner and validator (HTML Tidy).",
+  "website": "https://github.com/htacg/tidy-html5",
+  "licenses": ["MIT"],
+  "developers": [],
+  "tag": "native"
+}

@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:minizip",
+  "name": "MiniZip",
+  "artifactVersion": "1.01e",
+  "description": "Zip archive read/write library built on Info-ZIP's unzip/ioapi, used for EPUB unpacking.",
+  "website": "http://www.info-zip.org",
+  "licenses": ["Info-ZIP"],
+  "developers": [],
+  "tag": "native"
+}

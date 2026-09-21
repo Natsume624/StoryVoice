@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:gumbo",
+  "name": "Gumbo HTML5 Parser",
+  "artifactVersion": "0.9.2",
+  "description": "Pure-C HTML5 parsing library, embedded in the app's CSS/HTML parsing chain.",
+  "website": "https://github.com/google/gumbo-parser",
+  "licenses": ["Apache-2.0"],
+  "developers": [],
+  "tag": "native"
+}

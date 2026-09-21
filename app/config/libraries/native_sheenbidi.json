@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:sheenbidi",
+  "name": "SheenBidi",
+  "artifactVersion": "3.0.0",
+  "description": "Unicode bidirectional algorithm and complex text layout engine.",
+  "website": "https://github.com/Tehreer/SheenBidi",
+  "licenses": ["Apache-2.0"],
+  "developers": [],
+  "tag": "native"
+}

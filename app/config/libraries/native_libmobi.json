@@ -1,0 +1,10 @@
+{
+  "uniqueId": "native:libmobi",
+  "name": "libmobi",
+  "artifactVersion": "0.12",
+  "description": "Mobipocket (MOBI/AZW/AZW3) e-book format parser written in C.",
+  "website": "https://github.com/bfabiszewski/libmobi",
+  "licenses": ["LGPL-3.0"],
+  "developers": [],
+  "tag": "native"
+}
