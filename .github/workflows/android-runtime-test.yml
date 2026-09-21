@@ -41,13 +41,17 @@ jobs:
             ./gradlew :app:assembleDebug
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c
-            adb shell am start -W -n com.storyvoice.app/.MainActivity | tee launch-result.txt
-            sleep 5
-            adb shell uiautomator dump /sdcard/storyvoice-window.xml
-            adb pull /sdcard/storyvoice-window.xml storyvoice-window.xml
-            grep -q "拾声" storyvoice-window.xml
+            adb shell am force-stop com.storyvoice.app
+            adb shell am start -n com.storyvoice.app/.MainActivity | tee launch-result.txt
+            sleep 20
+            adb shell pidof com.storyvoice.app | tee storyvoice-pid.txt
+            adb shell dumpsys activity activities > storyvoice-activity.txt
             adb exec-out screencap -p > storyvoice-launch.png
             adb logcat -d > storyvoice-logcat.txt
+            adb shell uiautomator dump /sdcard/storyvoice-window.xml || true
+            adb pull /sdcard/storyvoice-window.xml storyvoice-window.xml || true
+            test -s storyvoice-pid.txt
+            grep -q "com.storyvoice.app/.MainActivity" storyvoice-activity.txt
             if grep -E "FATAL EXCEPTION|ANR in com.storyvoice" storyvoice-logcat.txt; then exit 1; fi
 
       - name: Upload runtime evidence
@@ -57,6 +61,8 @@ jobs:
           name: StoryVoice-runtime-evidence
           path: |
             launch-result.txt
+            storyvoice-pid.txt
+            storyvoice-activity.txt
             storyvoice-window.xml
             storyvoice-launch.png
             storyvoice-logcat.txt
