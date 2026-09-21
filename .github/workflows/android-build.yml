@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish v0.2.1 to GitHub Releases"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -44,3 +50,11 @@ jobs:
           path: StoryVoice-v0.2.1.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish v0.2.1
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v0.2.1 || gh release create v0.2.1 --title "StoryVoice v0.2.1" --prerelease --notes "修复书架与阅读页面卡顿：书架和大文件写入改为后台处理，阅读进度不再反复写入整本正文；加入全新的拾声品牌图标。"
+          gh release upload v0.2.1 StoryVoice-v0.2.1.apk --clobber
