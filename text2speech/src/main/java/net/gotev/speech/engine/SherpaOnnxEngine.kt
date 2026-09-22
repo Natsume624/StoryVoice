@@ -564,10 +564,11 @@ class SherpaOnnxEngine constructor(
                     }
 
                     if (!streamed && engineModelConfig.engineModel == "nano-en-v0_2-fp16") {
+                        val completeSamples = samplesArray!!
                         // 对音频尾部采样做 fade-out，消除末尾 click 噪声, 20ms
                         val fadeLen = (audioSampleRate * 0.02).toInt().coerceAtMost(totalSamples) // 20ms
                         for (i in 0 until fadeLen) {
-                            samplesArray[totalSamples - fadeLen + i] *= 1f - i.toFloat() / fadeLen
+                            completeSamples[totalSamples - fadeLen + i] *= 1f - i.toFloat() / fadeLen
                         }
                     }
                     if (streamed) {
