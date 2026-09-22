@@ -7,10 +7,10 @@ data class TtsPreferences constructor(
     val speed: Float,
     val pitch: Float,
 
-    val ttsEngineType: TTSEngineType = TTSEngineType.SYSTEM,
-    val selectedTTSModel: String? = null,      // 模型名称，仅 AI TTS 使用
+    val ttsEngineType: TTSEngineType = TTSEngineType.OFFLINE_NEURAL_AI,
+    val selectedTTSModel: String? = "taiwan-story-voice",      // 模型名称，仅 AI TTS 使用
     val selectedSpeaker: Int = 0,          // 说话人 ID，仅 AI TTS 使用
-    val isFirstAiTtsSelection: Boolean = true,
+    val isFirstAiTtsSelection: Boolean = false,
 ) {
 
 }

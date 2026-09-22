@@ -22,6 +22,7 @@ class TtsPreferencesUtil @Inject constructor(
     private val dataStore = context.ttsPreferencesDataStore
 
     companion object {
+        private const val DEFAULT_STORYVOICE_MODEL = "taiwan-story-voice"
         val SPEED = floatPreferencesKey("speed")
         val PITCH = floatPreferencesKey("spitch")
         val LANGUAGE = stringPreferencesKey("language")
@@ -39,10 +40,10 @@ class TtsPreferencesUtil @Inject constructor(
             speed = 1.0f,
             pitch = 1.0f,
 
-            ttsEngineType = TTSEngineType.SYSTEM,
-            selectedTTSModel = null,
+            ttsEngineType = TTSEngineType.OFFLINE_NEURAL_AI,
+            selectedTTSModel = DEFAULT_STORYVOICE_MODEL,
             selectedSpeaker = 0,
-            isFirstAiTtsSelection = true
+            isFirstAiTtsSelection = false
         )
     }
 
@@ -62,11 +63,11 @@ class TtsPreferencesUtil @Inject constructor(
             }
         }
 
-        val strType: String = preferences[ENGINE_TYPE].orEmpty()
-        val engineType = if (strType == TTSEngineType.SYSTEM.name || strType.isEmpty()) {
-            TTSEngineType.SYSTEM
-        } else {
-            TTSEngineType.OFFLINE_NEURAL_AI
+        val strType = preferences[ENGINE_TYPE]
+        val engineType = when (strType) {
+            null -> defaultPreferences.ttsEngineType
+            TTSEngineType.SYSTEM.name -> TTSEngineType.SYSTEM
+            else -> TTSEngineType.OFFLINE_NEURAL_AI
         }
 
         TtsPreferences(
