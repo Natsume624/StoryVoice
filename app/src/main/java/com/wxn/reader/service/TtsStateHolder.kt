@@ -181,7 +181,19 @@ class TtsStateHolder @Inject constructor(
         update {
             it.copy(
                 ttsEngineStatus = engineStatus,
-                ttsPlayerStatus = if (engineStatus == TtsEngineStatus.INITIALIZING) TtsPlaybackStatus.PENDING_PLAYING else it.ttsPlayerStatus
+                ttsPlayerStatus = when (engineStatus) {
+                    TtsEngineStatus.INITIALIZING -> TtsPlaybackStatus.PENDING_PLAYING
+                    TtsEngineStatus.FAILED,
+                    TtsEngineStatus.NEED_MODEL -> TtsPlaybackStatus.PAUSED
+                    else -> it.ttsPlayerStatus
+                },
+                // Previously an initialization failure left the player in
+                // PENDING_PLAYING forever, which appeared as an endless spinner.
+                error = when (engineStatus) {
+                    TtsEngineStatus.FAILED,
+                    TtsEngineStatus.NEED_MODEL -> TtsError.EngineNotReady
+                    else -> it.error
+                }
             )
         }
     }

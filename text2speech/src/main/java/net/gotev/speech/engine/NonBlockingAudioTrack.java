@@ -34,6 +34,8 @@ public class NonBlockingAudioTrack {
 
         int offset;
         int size;
+
+        boolean finalChunk;
     }
 
     private PlaySentenceCallback mPlaySentenceCallback;
@@ -246,6 +248,19 @@ public class NonBlockingAudioTrack {
                     }
 
                     String utteranceId = element.utteranceId;
+
+                    // Streaming TTS places a zero-length marker after the last audio
+                    // chunk.  Treat it as sentence completion instead of asking
+                    // AudioTrack to write an empty buffer (which would return 0 and
+                    // leave the marker stuck in the queue forever).
+                    if (element.size == 0) {
+                        mQueue.poll();
+                        if (element.finalChunk && !utteranceId.isEmpty() && mPlaySentenceCallback != null) {
+                            mPlaySentenceCallback.onEnd(utteranceId);
+                        }
+                        continue;
+                    }
+
                     int written = mAudioTrack.write(element.data,
                             element.offset,
                             element.size,
@@ -269,7 +284,7 @@ public class NonBlockingAudioTrack {
                         break;
                     }
                     mQueue.poll(); //移除顶部元素
-                    if (!utteranceId.isEmpty() && mPlaySentenceCallback != null) {
+                    if (element.finalChunk && !utteranceId.isEmpty() && mPlaySentenceCallback != null) {
                         mPlaySentenceCallback.onEnd(utteranceId);
                     }
                 }
@@ -325,6 +340,14 @@ public class NonBlockingAudioTrack {
      * @return true 写入成功, false: 写入失败
      */
     public boolean write(String utteranceId, float[] data, int size, long timeoutMs) {
+        return write(utteranceId, data, size, timeoutMs, true);
+    }
+
+    /**
+     * Enqueue one piece of an utterance. Intermediate streaming chunks must set
+     * finalChunk=false so listeners receive onEnd only after the final marker.
+     */
+    public boolean write(String utteranceId, float[] data, int size, long timeoutMs, boolean finalChunk) {
         if (!isValid()) {
             Logger.INSTANCE.w("NonBlockingAudioTrack::write failed:: INVALID");
             return false;
@@ -339,6 +362,7 @@ public class NonBlockingAudioTrack {
         element.data = Arrays.copyOf(data, size);
         element.size = size;
         element.offset = 0;
+        element.finalChunk = finalChunk;
 
         try {
             if (!mQueue.offer(element, timeoutMs, TimeUnit.MILLISECONDS)) {
@@ -351,6 +375,10 @@ public class NonBlockingAudioTrack {
         // accumulate size written to queue
         mNumBytesQueued.addAndGet(size * 4); //1个float 4个字节
         return true;
+    }
+
+    public boolean finishStreaming(String utteranceId, long timeoutMs) {
+        return write(utteranceId, new float[0], 0, timeoutMs, true);
     }
 
     public static class AudioWriteException extends Exception {
@@ -368,4 +396,3 @@ public class NonBlockingAudioTrack {
         mPlaySentenceCallback = callback;
     }
 }
-

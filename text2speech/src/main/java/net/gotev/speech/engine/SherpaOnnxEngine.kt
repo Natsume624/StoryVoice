@@ -478,8 +478,10 @@ class SherpaOnnxEngine constructor(
                 val silence = FloatArray(audioSampleRate) // 默认值全为 0.0f = 静音
                 audioTrackPlayer.onStreaming(utteranceId, silence)
             } else {
+                val isZipVoice = engineModelConfig.modelType == MODEL_TYPE_ZIPVOICE
+                val receivedStreamingAudio = AtomicBoolean(false)
                 val audio = try {
-                    val generationConfig = if (engineModelConfig.modelType == MODEL_TYPE_ZIPVOICE) {
+                    val generationConfig = if (isZipVoice) {
                         val reference = requireNotNull(zipVoiceReference) {
                             "ZipVoice reference audio is not loaded"
                         }
@@ -497,10 +499,44 @@ class SherpaOnnxEngine constructor(
                             speed = speedFloat,
                         )
                     }
-                    localTts.generateWithConfig(
-                        text = textStr,
-                        config = generationConfig,
-                    )
+
+                    if (isZipVoice) {
+                        // ZipVoice is substantially heavier than the other bundled
+                        // engines. Waiting for a complete sentence can leave the play
+                        // button spinning for tens of seconds on a phone. Feed native
+                        // output to AudioTrack as it is produced so playback begins as
+                        // soon as the first chunk is ready.
+                        localTts.generateWithConfigAndCallback(
+                            text = textStr,
+                            config = generationConfig,
+                        ) { samples ->
+                            if (samples.isEmpty()) {
+                                1
+                            } else {
+                                var queued = false
+                                while (!queued &&
+                                    !isShuttingDown.get() &&
+                                    currentGenerationJob?.isCancelled != true &&
+                                    audioTrackPlayer.isValid()
+                                ) {
+                                    queued = audioTrackPlayer.onStreamingChunk(utteranceId, samples) > 0
+                                    if (!queued) Thread.sleep(STREAM_RETRY_DELAY_MS)
+                                }
+
+                                if (queued) {
+                                    receivedStreamingAudio.set(true)
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                        }
+                    } else {
+                        localTts.generateWithConfig(
+                            text = textStr,
+                            config = generationConfig,
+                        )
+                    }
                 } catch (ex: Exception) {
                     Logger.e("SherpaOnnxEngine:generate::ex=$ex")
                     ttsCallback?.onError(utteranceId, PlayErrorCode.PlayErrorAudioGenerateFail)
@@ -513,7 +549,8 @@ class SherpaOnnxEngine constructor(
                 val totalSamples = samplesArray?.size ?: 0
                 audioSampleRate = audio?.sampleRate ?: 0
 
-                val ok = samplesArray != null && samplesArray.isNotEmpty() && totalSamples > 0 && audioSampleRate > 0
+                val streamed = receivedStreamingAudio.get()
+                val ok = streamed || (samplesArray != null && samplesArray.isNotEmpty() && totalSamples > 0 && audioSampleRate > 0)
                 if (!ok) { //音频生产成功
                     ttsCallback?.onError(utteranceId, PlayErrorCode.PlayErrorAudioGenerateFail)
                     return@launchIO
@@ -526,14 +563,25 @@ class SherpaOnnxEngine constructor(
                         return@launchIO
                     }
 
-                    if (engineModelConfig.engineModel == "nano-en-v0_2-fp16") {
+                    if (!streamed && engineModelConfig.engineModel == "nano-en-v0_2-fp16") {
                         // 对音频尾部采样做 fade-out，消除末尾 click 噪声, 20ms
                         val fadeLen = (audioSampleRate * 0.02).toInt().coerceAtMost(totalSamples) // 20ms
                         for (i in 0 until fadeLen) {
                             samplesArray[totalSamples - fadeLen + i] *= 1f - i.toFloat() / fadeLen
                         }
                     }
-                    audioTrackPlayer.onStreaming(utteranceId, samplesArray)
+                    if (streamed) {
+                        // onEnd must be emitted only after the last queued chunk has
+                        // actually played; intermediate chunks keep the same utterance.
+                        while (audioTrackPlayer.finishStreaming(utteranceId) == 0 &&
+                            !isShuttingDown.get() &&
+                            currentGenerationJob?.isCancelled != true
+                        ) {
+                            delay(STREAM_RETRY_DELAY_MS)
+                        }
+                    } else {
+                        audioTrackPlayer.onStreaming(utteranceId, samplesArray!!)
+                    }
                 }
             }
             if (isShuttingDown.get() || !isActive) {
@@ -614,6 +662,7 @@ class SherpaOnnxEngine constructor(
     }
 
     private companion object {
+        const val STREAM_RETRY_DELAY_MS = 10L
         const val ZIPVOICE_REFERENCE_ASSET = "voice/taiwan_reference.wav"
         const val ZIPVOICE_REFERENCE_TEXT =
             "小星星轻轻落在窗台上，对还没有睡着的小兔子说：别担心呀，今晚我会一直陪着你。现在，闭上眼睛，做一个甜甜的梦吧。"

@@ -95,6 +95,20 @@ class AudioStreamPlayer : IAudioPlayer {
         }
     }
 
+    /** Queue an intermediate chunk without completing the sentence callback. */
+    fun onStreamingChunk(utteranceId: String, samples: FloatArray): Int {
+        return if (true == mAudioTrack?.write(utteranceId, samples, samples.size, 10, false)) {
+            1
+        } else {
+            0
+        }
+    }
+
+    /** Queue a marker which completes the sentence after all prior chunks play. */
+    fun finishStreaming(utteranceId: String): Int {
+        return if (true == mAudioTrack?.finishStreaming(utteranceId, 100)) 1 else 0
+    }
+
     override fun stop() {
         looperJob?.cancel()
         looperJob = null
